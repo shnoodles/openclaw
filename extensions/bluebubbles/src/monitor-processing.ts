@@ -13,6 +13,7 @@ import { downloadBlueBubblesAttachment } from "./attachments.js";
 import { markBlueBubblesChatRead, sendBlueBubblesTyping } from "./chat.js";
 import { resolveBlueBubblesConversationRoute } from "./conversation-route.js";
 import { fetchBlueBubblesHistory } from "./history.js";
+import { claimBlueBubblesInboundMessage } from "./inbound-dedupe.js";
 import { sendBlueBubblesMedia } from "./media-send.js";
 import {
   buildMessagePlaceholder,
@@ -586,6 +587,23 @@ export async function processMessage(
   target: WebhookTarget,
 ): Promise<void> {
   const { account, config, runtime, core, statusSink } = target;
+
+  // Drop BlueBubbles MessagePoller replays after server restart (#19176, #12053).
+  const claimed = await claimBlueBubblesInboundMessage({
+    guid: message.messageId,
+    accountId: account.accountId,
+    onDiskError: (error) =>
+      logVerbose(core, runtime, `inbound-dedupe disk error: ${String(error)}`),
+  });
+  if (!claimed) {
+    logVerbose(
+      core,
+      runtime,
+      `drop: duplicate inbound guid=${message.messageId} sender=${message.senderId}`,
+    );
+    return;
+  }
+
   const pairing = createChannelPairingController({
     core,
     channel: "bluebubbles",
