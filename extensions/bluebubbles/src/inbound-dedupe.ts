@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { type ClaimableDedupe, createClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import type { NormalizedWebhookMessage } from "./monitor-normalize.js";
 
 // BlueBubbles has no sequence/ack in its webhook protocol, and its
@@ -20,14 +21,16 @@ const FILE_MAX_ENTRIES = 50_000;
 const MAX_GUID_CHARS = 512;
 
 function resolveStateDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.OPENCLAW_STATE_DIR?.trim();
-  if (override) {
-    return override;
-  }
   if (env.VITEST || env.NODE_ENV === "test") {
-    return path.join(os.tmpdir(), `openclaw-vitest-${process.pid}`);
+    // Isolate tests from real ~/.openclaw state without sharing across tests.
+    // Stable-per-pid so the scoped dedupe test can observe persistence.
+    const name = "openclaw-vitest-" + process.pid;
+    return path.join(os.tmpdir(), name);
   }
-  return path.join(os.homedir(), ".openclaw");
+  // Canonical OpenClaw state dir: honors OPENCLAW_STATE_DIR (with `~` expansion
+  // via resolveUserPath), plus legacy/new fallback. Using the shared helper
+  // keeps this plugin's persistence aligned with the rest of OpenClaw state.
+  return resolveStateDir(env);
 }
 
 function resolveNamespaceFilePath(namespace: string): string {
