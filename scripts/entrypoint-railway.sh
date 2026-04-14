@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+# Do NOT use set -e — we want the gateway to start even if optional setup fails
 
 echo "[entrypoint] Starting OpenClaw with Vertex AI GLM-5.1-FP8"
 
@@ -8,8 +8,34 @@ echo "[entrypoint] Starting OpenClaw with Vertex AI GLM-5.1-FP8"
 if [ -n "$GOOGLE_SA_KEY_BASE64" ]; then
   echo "[entrypoint] Decoding service account key..."
   mkdir -p /tmp/gcloud
-  echo "$GOOGLE_SA_KEY_BASE64" | base64 -d > /tmp/gcloud/sa-key.json
-  export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcloud/sa-key.json"
+  if echo "$GOOGLE_SA_KEY_BASE64" | base64 -d > /tmp/gcloud/sa-key.json 2>/dev/null && [ -s /tmp/gcloud/sa-key.json ]; then
+    # Verify it's valid JSON
+    if node -e "JSON.parse(require('fs').readFileSync('/tmp/gcloud/sa-key.json','utf8'))" 2>/dev/null; then
+      export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcloud/sa-key.json"
+      echo "[entrypoint] Service account key decoded successfully"
+    else
+      echo "[entrypoint] WARNING: Decoded key is not valid JSON. Trying as raw JSON..."
+      # Maybe they pasted raw JSON instead of base64
+      echo "$GOOGLE_SA_KEY_BASE64" > /tmp/gcloud/sa-key.json
+      if node -e "JSON.parse(require('fs').readFileSync('/tmp/gcloud/sa-key.json','utf8'))" 2>/dev/null; then
+        export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcloud/sa-key.json"
+        echo "[entrypoint] Raw JSON key accepted"
+      else
+        echo "[entrypoint] WARNING: GOOGLE_SA_KEY_BASE64 is neither valid base64 nor valid JSON. Skipping."
+        rm -f /tmp/gcloud/sa-key.json
+      fi
+    fi
+  else
+    echo "[entrypoint] WARNING: base64 decode failed. Trying as raw JSON..."
+    echo "$GOOGLE_SA_KEY_BASE64" > /tmp/gcloud/sa-key.json
+    if node -e "JSON.parse(require('fs').readFileSync('/tmp/gcloud/sa-key.json','utf8'))" 2>/dev/null; then
+      export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcloud/sa-key.json"
+      echo "[entrypoint] Raw JSON key accepted"
+    else
+      echo "[entrypoint] WARNING: GOOGLE_SA_KEY_BASE64 is invalid. Skipping Vertex AI auth."
+      rm -f /tmp/gcloud/sa-key.json
+    fi
+  fi
 fi
 
 # Build the endpoint URL if components are provided
@@ -41,15 +67,15 @@ fi
 
 # --- OpenClaw Config ---
 STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" || true
 
 if [ ! -f "$STATE_DIR/openclaw.json" ]; then
   echo "[entrypoint] Copying initial config..."
-  cp /app/config/openclaw.json "$STATE_DIR/openclaw.json"
+  cp /app/config/openclaw.json "$STATE_DIR/openclaw.json" || true
 fi
 
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/data/workspace}"
-mkdir -p "$WORKSPACE_DIR"
+mkdir -p "$WORKSPACE_DIR" || true
 
 echo "[entrypoint] Starting OpenClaw gateway on port ${OPENCLAW_GATEWAY_PORT:-8080}..."
 exec node /app/openclaw.mjs gateway \
