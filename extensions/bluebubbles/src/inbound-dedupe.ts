@@ -77,25 +77,32 @@ function sanitizeGuid(guid: string | undefined | null): string | null {
 /**
  * Resolve the canonical dedupe key for a BlueBubbles inbound message.
  *
- * BlueBubbles sends URL-preview / sticker "balloon" events with a different
- * `messageId` than the text message they belong to; `associatedMessageGuid`
- * always points at the underlying logical message. We prefer it whenever
- * it's present so balloon-first vs text-first delivery cannot produce two
- * distinct dedupe keys for the same logical message across restarts.
+ * Mirrors `monitor-debounce.ts`'s `buildKey`: BlueBubbles sends URL-preview
+ * / sticker "balloon" events with a different `messageId` than the text
+ * message they belong to, and the debouncer coalesces the two only when
+ * both `balloonBundleId` AND `associatedMessageGuid` are present. We gate
+ * on the same pair so that regular replies — which also set
+ * `associatedMessageGuid` (pointing at the parent message) but have no
+ * `balloonBundleId` — are NOT collapsed onto their parent's dedupe key.
  *
- * (Note: the debouncer coalesces balloon+text entries within a single
- * process, but `combineDebounceEntries` clears `balloonBundleId` on merged
- * entries while keeping `associatedMessageGuid`. Gating only on
- * `balloonBundleId && associatedMessageGuid` — as the debouncer does —
- * would make the merged message fall back to its `messageId` here, which
- * would then differ from a later solo replay's key. Always preferring
- * `associatedMessageGuid` when set avoids that split.)
+ * Known tradeoff: `combineDebounceEntries` clears `balloonBundleId` on
+ * merged entries while keeping `associatedMessageGuid`, so a post-merge
+ * balloon+text message here will fall back to its `messageId`. A later
+ * MessagePoller replay that arrives in a different text-first/balloon-first
+ * order could therefore produce a different `messageId` at merge time and
+ * bypass this dedupe for that one message. That edge case is strictly
+ * narrower than the alternative — which would dedupe every distinct user
+ * reply against the same parent GUID and silently drop real messages.
  */
 export function resolveBlueBubblesInboundDedupeKey(
-  message: Pick<NormalizedWebhookMessage, "messageId" | "associatedMessageGuid">,
+  message: Pick<
+    NormalizedWebhookMessage,
+    "messageId" | "balloonBundleId" | "associatedMessageGuid"
+  >,
 ): string | undefined {
+  const balloonBundleId = message.balloonBundleId?.trim();
   const associatedMessageGuid = message.associatedMessageGuid?.trim();
-  if (associatedMessageGuid) {
+  if (balloonBundleId && associatedMessageGuid) {
     return associatedMessageGuid;
   }
   return message.messageId?.trim() || undefined;
