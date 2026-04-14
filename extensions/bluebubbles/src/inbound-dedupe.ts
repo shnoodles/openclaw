@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { type ClaimableDedupe, createClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
@@ -30,8 +31,18 @@ function resolveStateDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 function resolveNamespaceFilePath(namespace: string): string {
-  const safe = namespace.replace(/[^a-zA-Z0-9_-]/g, "_") || "global";
-  return path.join(resolveStateDirFromEnv(), "bluebubbles", "inbound-dedupe", `${safe}.json`);
+  // Keep a readable prefix for operator debugging, but suffix with a short
+  // hash of the raw namespace so account IDs that only differ by
+  // filesystem-unsafe characters (e.g. "acct/a" vs "acct:a") don't collapse
+  // onto the same file.
+  const safePrefix = namespace.replace(/[^a-zA-Z0-9_-]/g, "_") || "ns";
+  const hash = createHash("sha256").update(namespace, "utf8").digest("hex").slice(0, 12);
+  return path.join(
+    resolveStateDirFromEnv(),
+    "bluebubbles",
+    "inbound-dedupe",
+    `${safePrefix}__${hash}.json`,
+  );
 }
 
 function buildPersistentImpl(): ClaimableDedupe {
@@ -66,22 +77,25 @@ function sanitizeGuid(guid: string | undefined | null): string | null {
 /**
  * Resolve the canonical dedupe key for a BlueBubbles inbound message.
  *
- * Mirrors `monitor-debounce.ts`'s `buildKey`: BlueBubbles sends URL-preview
- * / sticker "balloon" events with a different `messageId` than the text
- * message they belong to. When `balloonBundleId` + `associatedMessageGuid`
- * are present, we dedupe against the underlying message GUID so balloon-first
- * vs text-first delivery order can't produce two distinct dedupe keys for
- * the same logical message (review thread `rkzI` on #66230).
+ * BlueBubbles sends URL-preview / sticker "balloon" events with a different
+ * `messageId` than the text message they belong to; `associatedMessageGuid`
+ * always points at the underlying logical message. We prefer it whenever
+ * it's present so balloon-first vs text-first delivery cannot produce two
+ * distinct dedupe keys for the same logical message across restarts.
+ *
+ * (Note: the debouncer coalesces balloon+text entries within a single
+ * process, but `combineDebounceEntries` clears `balloonBundleId` on merged
+ * entries while keeping `associatedMessageGuid`. Gating only on
+ * `balloonBundleId && associatedMessageGuid` — as the debouncer does —
+ * would make the merged message fall back to its `messageId` here, which
+ * would then differ from a later solo replay's key. Always preferring
+ * `associatedMessageGuid` when set avoids that split.)
  */
 export function resolveBlueBubblesInboundDedupeKey(
-  message: Pick<
-    NormalizedWebhookMessage,
-    "messageId" | "balloonBundleId" | "associatedMessageGuid"
-  >,
+  message: Pick<NormalizedWebhookMessage, "messageId" | "associatedMessageGuid">,
 ): string | undefined {
-  const balloonBundleId = message.balloonBundleId?.trim();
   const associatedMessageGuid = message.associatedMessageGuid?.trim();
-  if (balloonBundleId && associatedMessageGuid) {
+  if (associatedMessageGuid) {
     return associatedMessageGuid;
   }
   return message.messageId?.trim() || undefined;
