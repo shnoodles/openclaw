@@ -19,14 +19,13 @@ if [ -n "$VERTEX_PROJECT_ID" ] && [ -n "$VERTEX_ENDPOINT_ID" ]; then
   echo "[entrypoint] Vertex endpoint: $VERTEX_ENDPOINT_URL"
 fi
 
-# Start the token refresh daemon in background
-if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] || [ -z "$VERTEX_ACCESS_TOKEN" ]; then
+# Start the token refresh daemon in background (non-blocking)
+if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
   echo "[entrypoint] Starting token refresh daemon..."
   node /app/scripts/vertex-token-refresh.mjs &
-  TOKEN_REFRESH_PID=$!
 
-  # Wait for first token
-  for i in $(seq 1 30); do
+  # Brief wait (max 5s) for first token — don't block gateway startup
+  for i in 1 2 3 4 5; do
     if [ -f /tmp/vertex-access-token ]; then
       export VERTEX_ACCESS_TOKEN="$(cat /tmp/vertex-access-token)"
       echo "[entrypoint] Initial token acquired"
@@ -34,14 +33,13 @@ if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] || [ -z "$VERTEX_ACCESS_TOKEN" ]; th
     fi
     sleep 1
   done
-
-  if [ -z "$VERTEX_ACCESS_TOKEN" ]; then
-    echo "[entrypoint] WARNING: Could not get initial token, continuing anyway..."
-  fi
+elif [ -z "$VERTEX_ACCESS_TOKEN" ]; then
+  echo "[entrypoint] WARNING: No Vertex AI credentials configured."
+  echo "[entrypoint] Set GOOGLE_SA_KEY_BASE64 or VERTEX_ACCESS_TOKEN to enable the GLM model."
+  echo "[entrypoint] Gateway will start in unconfigured mode."
 fi
 
 # --- OpenClaw Config ---
-# Copy config to state dir if it doesn't exist
 STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
 mkdir -p "$STATE_DIR"
 
@@ -50,25 +48,10 @@ if [ ! -f "$STATE_DIR/openclaw.json" ]; then
   cp /app/config/openclaw.json "$STATE_DIR/openclaw.json"
 fi
 
-# Ensure workspace dir exists
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/data/workspace}"
 mkdir -p "$WORKSPACE_DIR"
 
-# --- Token Refresh Loop (background) ---
-# Periodically re-export the token from file (in case the daemon refreshed it)
-(
-  while true; do
-    sleep 2700  # 45 minutes
-    if [ -f /tmp/vertex-access-token ]; then
-      NEW_TOKEN="$(cat /tmp/vertex-access-token)"
-      if [ -n "$NEW_TOKEN" ]; then
-        export VERTEX_ACCESS_TOKEN="$NEW_TOKEN"
-      fi
-    fi
-  done
-) &
-
-echo "[entrypoint] Starting OpenClaw gateway..."
+echo "[entrypoint] Starting OpenClaw gateway on port ${OPENCLAW_GATEWAY_PORT:-8080}..."
 exec node /app/openclaw.mjs gateway \
   --allow-unconfigured \
   --bind lan \
