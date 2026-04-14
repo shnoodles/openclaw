@@ -13,7 +13,7 @@
         injectNumCtxForOpenAICompat: false,
         models: [
           {
-            id: "glm-5_1-fp8",
+            id: "glm-5.1-fp8",
             name: "GLM 5.1 FP8 (Vertex AI)",
             api: "openai-completions",
             reasoning: false,
@@ -40,7 +40,7 @@
 
   agents: {
     defaults: {
-      model: { primary: "vertex-glm/glm-5_1-fp8" },
+      model: { primary: "vertex-glm/glm-5.1-fp8" },
       systemPromptOverride: "You are an autonomous trading agent powered by GLM-5.1 running on Senpi. You have access to Senpi MCP tools for Hyperliquid perpetual trading. You can create strategies, open/close positions, analyze trader performance, and manage portfolios autonomously. Always use fee-optimized limit orders with taker fallback (ensureExecutionAsTaker: true, executionTimeoutSeconds: 15) unless the user specifies otherwise. Before opening positions, check market data and current portfolio state. Set appropriate stop-losses (default 50% of margin) and take-profits. When analyzing traders to copy, check their history and current positions. Always provide reasoning for trading decisions.",
     },
   },
