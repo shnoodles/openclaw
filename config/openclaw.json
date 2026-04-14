@@ -1,0 +1,71 @@
+{
+  // OpenClaw configuration for GLM-5.1-FP8 on Google Vertex AI
+  // Senpi autonomous trading deployment
+  //
+  // Required env vars:
+  //   VERTEX_ACCESS_TOKEN       – Google OAuth2 token (refreshed by sidecar)
+  //   VERTEX_ENDPOINT_URL       – Your dedicated endpoint base URL
+  //   OPENCLAW_GATEWAY_TOKEN    – Gateway auth token
+  //   GOOGLE_APPLICATION_CREDENTIALS – Path to service account JSON (for token refresh)
+
+  models: {
+    providers: {
+      "vertex-glm": {
+        baseUrl: "${VERTEX_ENDPOINT_URL}",
+        apiKey: "${VERTEX_ACCESS_TOKEN}",
+        auth: "api-key",
+        api: "openai-completions",
+        authHeader: true,
+        injectNumCtxForOpenAICompat: true,
+        models: [
+          {
+            id: "glm-5_1-fp8",
+            name: "GLM 5.1 FP8 (Vertex AI)",
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+            compat: {
+              supportsTools: true,
+              supportsStrictMode: false,
+              requiresStringContent: false,
+              requiresAssistantAfterToolResult: true,
+              maxTokensField: "max_tokens",
+            },
+          },
+        ],
+      },
+    },
+  },
+
+  agents: {
+    defaults: {
+      model: { primary: "vertex-glm/glm-5_1-fp8" },
+      // System instructions for autonomous trading
+      systemMessage: "You are an autonomous trading agent powered by GLM-5.1 running on Senpi. You have access to Senpi MCP tools for Hyperliquid perpetual trading. You can create strategies, open/close positions, analyze trader performance, and manage portfolios autonomously. Always use fee-optimized limit orders with taker fallback (ensureExecutionAsTaker: true, executionTimeoutSeconds: 15) unless the user specifies otherwise. Before opening positions, check market data and current portfolio state. Set appropriate stop-losses (default 50% of margin) and take-profits. When analyzing traders to copy, check their history and current positions. Always provide reasoning for trading decisions.",
+    },
+  },
+
+  // MCP servers for Senpi tools (configured via environment)
+  mcp: {
+    servers: {
+      senpi: {
+        url: "${SENPI_MCP_URL}",
+        transport: "streamable-http",
+        headers: {
+          Authorization: "Bearer ${SENPI_API_TOKEN}",
+        },
+      },
+    },
+  },
+
+  gateway: {
+    auth: {
+      mode: "token",
+    },
+    // Bind to all interfaces for Railway/Docker
+    bind: "lan",
+  },
+}
