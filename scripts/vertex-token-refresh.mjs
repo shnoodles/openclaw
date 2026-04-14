@@ -40,7 +40,7 @@ function log(msg) {
 
 function buildEndpointUrl() {
   const projectId = process.env.VERTEX_PROJECT_ID;
-  const region = process.env.VERTEX_REGION || "us-central1";
+  const region = process.env.VERTEX_REGION || "us-west1";
   const endpointId = process.env.VERTEX_ENDPOINT_ID;
 
   if (!projectId || !endpointId) {

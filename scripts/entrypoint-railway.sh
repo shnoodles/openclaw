@@ -14,7 +14,7 @@ fi
 
 # Build the endpoint URL if components are provided
 if [ -n "$VERTEX_PROJECT_ID" ] && [ -n "$VERTEX_ENDPOINT_ID" ]; then
-  VERTEX_REGION="${VERTEX_REGION:-us-central1}"
+  VERTEX_REGION="${VERTEX_REGION:-us-west1}"
   export VERTEX_ENDPOINT_URL="https://${VERTEX_REGION}-aiplatform.googleapis.com/v1beta1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_REGION}/endpoints/${VERTEX_ENDPOINT_ID}"
   echo "[entrypoint] Vertex endpoint: $VERTEX_ENDPOINT_URL"
 fi

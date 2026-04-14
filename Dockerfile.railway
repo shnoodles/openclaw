@@ -1,7 +1,6 @@
-# syntax=docker/dockerfile:1.7
-#
 # OpenClaw + GLM-5.1-FP8 (Vertex AI) — Railway Deployment
 # Based on the upstream Dockerfile with Vertex AI token refresh support
+# Note: BuildKit cache mounts removed for Railway compatibility
 
 ARG OPENCLAW_NODE_BOOKWORM_IMAGE="node:24-bookworm@sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
 ARG OPENCLAW_NODE_BOOKWORM_DIGEST="sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
@@ -44,8 +43,7 @@ COPY scripts/postinstall-bundled-plugins.mjs scripts/npm-runner.mjs scripts/wind
 
 COPY --from=ext-deps /out/ ./${OPENCLAW_BUNDLED_PLUGIN_DIR}/
 
-RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
-    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
+RUN NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
 
 COPY . .
 
@@ -91,12 +89,11 @@ LABEL org.opencontainers.image.source="https://github.com/shnoodles/openclaw" \
 
 WORKDIR /app
 
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
+RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      procps hostname curl git lsof openssl ca-certificates
+      procps hostname curl git lsof openssl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN chown node:node /app
 
