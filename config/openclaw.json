@@ -1,12 +1,6 @@
 {
   // OpenClaw configuration for GLM-5.1-FP8 on Google Vertex AI
   // Senpi autonomous trading deployment
-  //
-  // Required env vars:
-  //   VERTEX_ACCESS_TOKEN       – Google OAuth2 token (refreshed by sidecar)
-  //   VERTEX_ENDPOINT_URL       – Your dedicated endpoint base URL
-  //   OPENCLAW_GATEWAY_TOKEN    – Gateway auth token
-  //   GOOGLE_APPLICATION_CREDENTIALS – Path to service account JSON (for token refresh)
 
   models: {
     providers: {
@@ -43,8 +37,7 @@
   agents: {
     defaults: {
       model: { primary: "vertex-glm/glm-5_1-fp8" },
-      // System instructions for autonomous trading
-      systemMessage: "You are an autonomous trading agent powered by GLM-5.1 running on Senpi. You have access to Senpi MCP tools for Hyperliquid perpetual trading. You can create strategies, open/close positions, analyze trader performance, and manage portfolios autonomously. Always use fee-optimized limit orders with taker fallback (ensureExecutionAsTaker: true, executionTimeoutSeconds: 15) unless the user specifies otherwise. Before opening positions, check market data and current portfolio state. Set appropriate stop-losses (default 50% of margin) and take-profits. When analyzing traders to copy, check their history and current positions. Always provide reasoning for trading decisions.",
+      systemPromptOverride: "You are an autonomous trading agent powered by GLM-5.1 running on Senpi. You have access to Senpi MCP tools for Hyperliquid perpetual trading. You can create strategies, open/close positions, analyze trader performance, and manage portfolios autonomously. Always use fee-optimized limit orders with taker fallback (ensureExecutionAsTaker: true, executionTimeoutSeconds: 15) unless the user specifies otherwise. Before opening positions, check market data and current portfolio state. Set appropriate stop-losses (default 50% of margin) and take-profits. When analyzing traders to copy, check their history and current positions. Always provide reasoning for trading decisions.",
     },
   },
 
@@ -65,15 +58,11 @@
     auth: {
       mode: "token",
     },
-    // Bind to all interfaces for Railway/Docker
     bind: "lan",
-    // Enable OpenAI-compatible HTTP endpoints
     http: {
       endpoints: {
         chatCompletions: { enabled: true },
         responses: { enabled: true },
-        models: { enabled: true },
-        embeddings: { enabled: true },
       },
     },
   },
