@@ -10,7 +10,7 @@
         auth: "api-key",
         api: "openai-completions",
         authHeader: true,
-        injectNumCtxForOpenAICompat: true,
+        injectNumCtxForOpenAICompat: false,
         models: [
           {
             id: "glm-5_1-fp8",
@@ -22,8 +22,12 @@
             contextWindow: 128000,
             maxTokens: 8192,
             compat: {
-              supportsTools: true,
+              supportsTools: false,
               supportsStrictMode: false,
+              supportsStore: false,
+              supportsUsageInStreaming: false,
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: false,
               requiresStringContent: false,
               requiresAssistantAfterToolResult: true,
               maxTokensField: "max_tokens",
