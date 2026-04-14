@@ -67,5 +67,14 @@
     },
     // Bind to all interfaces for Railway/Docker
     bind: "lan",
+    // Enable OpenAI-compatible HTTP endpoints
+    http: {
+      endpoints: {
+        chatCompletions: { enabled: true },
+        responses: { enabled: true },
+        models: { enabled: true },
+        embeddings: { enabled: true },
+      },
+    },
   },
 }
