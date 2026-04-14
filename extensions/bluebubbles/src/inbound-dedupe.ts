@@ -1,10 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { createDedupeCache } from "openclaw/plugin-sdk/core";
-import {
-  type PersistentDedupe,
-  createPersistentDedupe,
-} from "openclaw/plugin-sdk/persistent-dedupe";
+import { type ClaimableDedupe, createClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
 
 // BlueBubbles has no sequence/ack in its webhook protocol, and its
 // MessagePoller replays its ~1-week lookback window as `new-message` events
@@ -17,6 +13,9 @@ import {
 const DEDUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MEMORY_MAX_SIZE = 5_000;
 const FILE_MAX_ENTRIES = 50_000;
+// Cap GUID length so a malformed or hostile payload can't bloat the on-disk
+// dedupe file. Real BB GUIDs are short (<64 chars); 512 is generous.
+const MAX_GUID_CHARS = 512;
 
 function resolveStateDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.OPENCLAW_STATE_DIR?.trim();
@@ -34,10 +33,8 @@ function resolveNamespaceFilePath(namespace: string): string {
   return path.join(resolveStateDirFromEnv(), "bluebubbles", "inbound-dedupe", `${safe}.json`);
 }
 
-type DedupeImpl = Pick<PersistentDedupe, "checkAndRecord" | "clearMemory">;
-
-function buildPersistentImpl(): DedupeImpl {
-  return createPersistentDedupe({
+function buildPersistentImpl(): ClaimableDedupe {
+  return createClaimableDedupe({
     ttlMs: DEDUP_TTL_MS,
     memoryMaxSize: MEMORY_MAX_SIZE,
     fileMaxEntries: FILE_MAX_ENTRIES,
@@ -45,42 +42,75 @@ function buildPersistentImpl(): DedupeImpl {
   });
 }
 
-function buildMemoryOnlyImpl(): DedupeImpl {
-  const cache = createDedupeCache({ ttlMs: DEDUP_TTL_MS, maxSize: MEMORY_MAX_SIZE });
-  return {
-    checkAndRecord: async (key: string, opts) => {
-      const trimmed = key.trim();
-      if (!trimmed) {
-        return true;
-      }
-      const scoped = `${opts?.namespace ?? "global"}:${trimmed}`;
-      return !cache.check(scoped, opts?.now);
-    },
-    clearMemory: () => cache.clear(),
-  };
+function buildMemoryOnlyImpl(): ClaimableDedupe {
+  return createClaimableDedupe({
+    ttlMs: DEDUP_TTL_MS,
+    memoryMaxSize: MEMORY_MAX_SIZE,
+  });
 }
 
-let impl: DedupeImpl = buildPersistentImpl();
+let impl: ClaimableDedupe = buildPersistentImpl();
+
+function sanitizeGuid(guid: string | undefined | null): string | null {
+  const trimmed = guid?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length > MAX_GUID_CHARS) {
+    return null;
+  }
+  return trimmed;
+}
+
+export type InboundDedupeClaim =
+  | { kind: "claimed"; finalize: () => Promise<void>; release: () => void }
+  | { kind: "duplicate" }
+  | { kind: "inflight" }
+  | { kind: "skip" };
 
 /**
- * Record an inbound BlueBubbles message GUID and report whether it is new.
- * Returns `true` when the GUID was not previously recorded (caller should
- * proceed), `false` when it is a duplicate (caller should drop).
- * Missing/empty GUIDs return `true` (cannot dedup — allow through).
+ * Attempt to claim an inbound BlueBubbles message GUID.
+ *
+ * - `claimed`: caller should process the message, then call `finalize()` on
+ *   success (persists the GUID) or `release()` on failure (lets a later
+ *   replay try again).
+ * - `duplicate`: we've already committed this GUID; caller should drop.
+ * - `inflight`: another claim is currently in progress; caller should drop
+ *   rather than race.
+ * - `skip`: GUID was missing or invalid — caller should continue processing
+ *   without dedup (no finalize/release needed).
  */
 export async function claimBlueBubblesInboundMessage(params: {
   guid: string | undefined | null;
   accountId: string;
   onDiskError?: (error: unknown) => void;
-}): Promise<boolean> {
-  const normalized = params.guid?.trim();
+}): Promise<InboundDedupeClaim> {
+  const normalized = sanitizeGuid(params.guid);
   if (!normalized) {
-    return true;
+    return { kind: "skip" };
   }
-  return impl.checkAndRecord(normalized, {
+  const claim = await impl.claim(normalized, {
     namespace: params.accountId,
     onDiskError: params.onDiskError,
   });
+  if (claim.kind === "duplicate") {
+    return { kind: "duplicate" };
+  }
+  if (claim.kind === "inflight") {
+    return { kind: "inflight" };
+  }
+  return {
+    kind: "claimed",
+    finalize: async () => {
+      await impl.commit(normalized, {
+        namespace: params.accountId,
+        onDiskError: params.onDiskError,
+      });
+    },
+    release: () => {
+      impl.release(normalized, { namespace: params.accountId });
+    },
+  };
 }
 
 /**

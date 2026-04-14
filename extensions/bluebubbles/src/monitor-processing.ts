@@ -582,27 +582,60 @@ function buildInboundHistorySnapshot(params: {
   return selected;
 }
 
+function sanitizeForLog(value: unknown): string {
+  return String(value).replace(/[\r\n\t\p{C}]/gu, " ");
+}
+
+/**
+ * Claim → process → finalize/release wrapper around the real inbound flow.
+ *
+ * Claim the GUID before doing any work so restart replays and in-flight
+ * concurrent redeliveries both drop cleanly. On success (including any
+ * intentional early return inside the core body) we commit the claim so
+ * later replays are rejected. On a thrown error we release it so the next
+ * delivery attempt can try again — this is what makes the dedupe safe to
+ * apply before processing rather than after.
+ */
 export async function processMessage(
   message: NormalizedWebhookMessage,
   target: WebhookTarget,
 ): Promise<void> {
-  const { account, config, runtime, core, statusSink } = target;
+  const { account, core, runtime } = target;
 
   // Drop BlueBubbles MessagePoller replays after server restart (#19176, #12053).
-  const claimed = await claimBlueBubblesInboundMessage({
+  const claim = await claimBlueBubblesInboundMessage({
     guid: message.messageId,
     accountId: account.accountId,
     onDiskError: (error) =>
-      logVerbose(core, runtime, `inbound-dedupe disk error: ${String(error)}`),
+      logVerbose(core, runtime, `inbound-dedupe disk error: ${sanitizeForLog(error)}`),
   });
-  if (!claimed) {
+  if (claim.kind === "duplicate" || claim.kind === "inflight") {
     logVerbose(
       core,
       runtime,
-      `drop: duplicate inbound guid=${message.messageId} sender=${message.senderId}`,
+      `drop: ${claim.kind} inbound guid=${sanitizeForLog(message.messageId)} sender=${sanitizeForLog(message.senderId)}`,
     );
     return;
   }
+
+  try {
+    await processMessageAfterDedupe(message, target);
+  } catch (error) {
+    if (claim.kind === "claimed") {
+      claim.release();
+    }
+    throw error;
+  }
+  if (claim.kind === "claimed") {
+    await claim.finalize();
+  }
+}
+
+async function processMessageAfterDedupe(
+  message: NormalizedWebhookMessage,
+  target: WebhookTarget,
+): Promise<void> {
+  const { account, config, runtime, core, statusSink } = target;
 
   const pairing = createChannelPairingController({
     core,
